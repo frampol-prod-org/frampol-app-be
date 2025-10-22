@@ -1,0 +1,15 @@
+# Environment variables
+.env
+
+# Node modules
+node_modules/
+
+# Logs
+logs/
+
+# Postman collections
+Postman/
+
+# API Testing Guide
+API_Testing_Guide.md
+
