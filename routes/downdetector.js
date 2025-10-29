@@ -8,19 +8,12 @@ if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
   process.env.PUPPETEER_ARGS = '--no-sandbox,--disable-setuid-sandbox';
 }
 
-let downdetectorModule;
-try {
-  downdetectorModule = require('downdetector-api');
-} catch (error) {
-  console.warn('[Downdetector] Failed to load downdetector-api module:', error.message);
-}
-
-const { downdetector } = downdetectorModule || {};
+// Load downdetector API
+const { downdetector } = require('downdetector-api');
 
 // Simple in-memory counter for API usage tracking
 const apiUsageStats = {
   downdetectorApi: 0,
-  httpFallback: 0,
   totalRequests: 0
 };
 
@@ -30,13 +23,12 @@ function logUsageStats() {
     const successRate = ((apiUsageStats.downdetectorApi / apiUsageStats.totalRequests) * 100).toFixed(1);
     console.log(`[API] 📊 Usage Statistics (${apiUsageStats.totalRequests} total requests):`);
     console.log(`[API] 📊 Downdetector API: ${apiUsageStats.downdetectorApi} (${successRate}%)`);
-    console.log(`[API] 📊 HTTP Fallback: ${apiUsageStats.httpFallback} (${(100 - parseFloat(successRate)).toFixed(1)}%)`);
   }
 }
 
 // GET /api/downdetector - Check service status
 router.get('/', async (req, res) => {
-  const { service, url } = req.query;
+  const { service } = req.query;
 
   if (!service) {
     return res.status(400).json({
@@ -51,21 +43,8 @@ router.get('/', async (req, res) => {
   try {
     const startTime = Date.now();
     
-    // If URL is provided, use HTTP fallback check
-    if (url) {
-      console.log(`[API] 🔍 Using HTTP fallback for ${service} with URL: ${url}`);
-      return await fallbackHttpCheck(req, res, url, startTime);
-    }
-
     // Try the main downdetector.com domain first
     let response;
-    
-    // Check if downdetector API is available
-    if (!downdetector) {
-      console.log(`[Downdetector] API not available, using HTTP fallback for ${service}`);
-      return await fallbackHttpCheck(req, res, `https://${service.toLowerCase()}.com`, startTime);
-    }
-    
     try {
       console.log(`[Downdetector] 🔍 Attempting ${service} on .com domain`);
       response = await downdetector(service);
@@ -79,9 +58,16 @@ router.get('/', async (req, res) => {
         console.log(`[Downdetector] ✅ Success for ${service} on .it domain`);
       } catch (itError) {
         console.log(`[Downdetector] ❌ .it domain failed for ${service}:`, itError.message);
-        // If all domains fail, fall back to basic HTTP check
-        console.log(`[Downdetector] 🔄 All domains failed for ${service}, falling back to HTTP check`);
-        return await fallbackHttpCheck(req, res, `https://${service.toLowerCase()}.com`, startTime);
+        // Try .nl domain
+        try {
+          console.log(`[Downdetector] 🔍 Attempting ${service} on .nl domain`);
+          response = await downdetector(service, 'nl');
+          console.log(`[Downdetector] ✅ Success for ${service} on .nl domain`);
+        } catch (nlError) {
+          console.log(`[Downdetector] ❌ .nl domain failed for ${service}:`, nlError.message);
+          // All domains failed
+          throw new Error(`Failed to fetch downdetector data for ${service} from all domains`);
+        }
       }
     }
 
@@ -104,9 +90,15 @@ router.get('/', async (req, res) => {
     });
 
   } catch (error) {
-    // Fallback to basic HTTP check if downdetector API fails
-    console.log(`[Downdetector] Error for ${service}:`, error);
-    return await fallbackHttpCheck(req, res, `https://${service.toLowerCase()}.com`, startTime);
+    console.log(`[Downdetector] ❌ Error for ${service}:`, error.message);
+    apiUsageStats.totalRequests--;
+    
+    res.status(500).json({
+      error: 'Failed to fetch service status from downdetector',
+      message: error.message,
+      serviceName: service,
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 
@@ -158,65 +150,6 @@ function analyzeDowndetectorData(data) {
   }
 }
 
-// Fallback HTTP check function
-async function fallbackHttpCheck(req, res, url, startTime = Date.now()) {
-  console.log(`[Fallback] Starting HTTP check for URL: ${url}`);
-
-  if (!url) {
-    console.log(`[Fallback] No URL provided, returning error`);
-    return res.status(400).json({
-      error: 'URL parameter is required for fallback check'
-    });
-  }
-
-  try {
-    new URL(url); // Validate URL format
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-    console.log(`[Fallback] Making HEAD request to ${url}`);
-    const response = await fetch(url, {
-      method: 'HEAD',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'DownDetect/1.0 (Service Status Monitor)',
-      },
-      redirect: 'follow',
-    });
-
-    clearTimeout(timeoutId);
-    const responseTime = Date.now() - startTime;
-    const isUp = response.status >= 200 && response.status < 300;
-
-    console.log(`[Fallback] ✅ SUCCESS: ${url} - Status: ${isUp ? 'up' : 'down'} - Source: HTTP Fallback - Response Time: ${responseTime}ms - HTTP Status: ${response.status}`);
-    apiUsageStats.httpFallback++;
-
-    res.json({
-      status: isUp ? 'up' : 'down',
-      responseTime,
-      httpStatus: response.status,
-      url: url,
-      fallback: true,
-      dataSource: 'http-fallback',
-      timestamp: new Date().toISOString(),
-    });
-
-  } catch (error) {
-    console.log(`[Fallback] ❌ FAILED: ${url} - Status: down - Source: HTTP Fallback - Error: ${error.message}`);
-    apiUsageStats.httpFallback++;
-    
-    res.json({
-      status: 'down',
-      responseTime: 0,
-      error: error.message,
-      url: url,
-      fallback: true,
-      dataSource: 'http-fallback',
-      timestamp: new Date().toISOString(),
-    });
-  }
-}
-
 // GET /api/downdetector/stats - Get API usage statistics
 router.get('/stats', (req, res) => {
   const successRate = apiUsageStats.totalRequests > 0 
@@ -226,7 +159,6 @@ router.get('/stats', (req, res) => {
   res.json({
     totalRequests: apiUsageStats.totalRequests,
     downdetectorApi: apiUsageStats.downdetectorApi,
-    httpFallback: apiUsageStats.httpFallback,
     successRate: parseFloat(successRate),
     timestamp: new Date().toISOString()
   });
