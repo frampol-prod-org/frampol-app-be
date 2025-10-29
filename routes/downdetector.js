@@ -1,6 +1,20 @@
 const express = require('express');
 const router = express.Router();
-const { downdetector } = require('downdetector-api');
+
+// Set Puppeteer environment variables for Railway/Docker environments
+if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
+  process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+  process.env.PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
+}
+
+let downdetectorModule;
+try {
+  downdetectorModule = require('downdetector-api');
+} catch (error) {
+  console.warn('[Downdetector] Failed to load downdetector-api module:', error.message);
+}
+
+const { downdetector } = downdetectorModule || {};
 
 // Simple in-memory counter for API usage tracking
 const apiUsageStats = {
@@ -44,19 +58,26 @@ router.get('/', async (req, res) => {
 
     // Try the main downdetector.com domain first
     let response;
+    
+    // Check if downdetector API is available
+    if (!downdetector) {
+      console.log(`[Downdetector] API not available, using HTTP fallback for ${service}`);
+      return await fallbackHttpCheck(req, res, `https://${service.toLowerCase()}.com`, startTime);
+    }
+    
     try {
       console.log(`[Downdetector] 🔍 Attempting ${service} on .com domain`);
       response = await downdetector(service);
       console.log(`[Downdetector] ✅ Success for ${service} on .com domain`);
     } catch (comError) {
-      console.log(`[Downdetector] ❌ .com domain failed for ${service}:`, comError);
+      console.log(`[Downdetector] ❌ .com domain failed for ${service}:`, comError.message);
       // If .com fails, try other domains (like .it, .nl, etc.)
       try {
         console.log(`[Downdetector] 🔍 Attempting ${service} on .it domain`);
         response = await downdetector(service, 'it');
         console.log(`[Downdetector] ✅ Success for ${service} on .it domain`);
       } catch (itError) {
-        console.log(`[Downdetector] ❌ .it domain failed for ${service}:`, itError);
+        console.log(`[Downdetector] ❌ .it domain failed for ${service}:`, itError.message);
         // If all domains fail, fall back to basic HTTP check
         console.log(`[Downdetector] 🔄 All domains failed for ${service}, falling back to HTTP check`);
         return await fallbackHttpCheck(req, res, `https://${service.toLowerCase()}.com`, startTime);
