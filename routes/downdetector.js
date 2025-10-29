@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { downdetector } = require('downdetector-api');
 
 // Simple in-memory counter for API usage tracking
 const apiUsageStats = {
@@ -41,76 +42,97 @@ router.get('/', async (req, res) => {
       return await fallbackHttpCheck(req, res, url, startTime);
     }
 
-    // Try to simulate downdetector-like behavior with HTTP check
-    // In a real implementation, you would use the actual downdetector API
-    console.log(`[API] 🔍 Simulating downdetector check for ${service}`);
-    
-    // For demo purposes, we'll use a simple HTTP check
-    // In production, you would integrate with the actual downdetector API
-    const response = await simulateDowndetectorCheck(service);
+    // Try the main downdetector.com domain first
+    let response;
+    try {
+      console.log(`[Downdetector] 🔍 Attempting ${service} on .com domain`);
+      response = await downdetector(service);
+      console.log(`[Downdetector] ✅ Success for ${service} on .com domain`);
+    } catch (comError) {
+      console.log(`[Downdetector] ❌ .com domain failed for ${service}:`, comError);
+      // If .com fails, try other domains (like .it, .nl, etc.)
+      try {
+        console.log(`[Downdetector] 🔍 Attempting ${service} on .it domain`);
+        response = await downdetector(service, 'it');
+        console.log(`[Downdetector] ✅ Success for ${service} on .it domain`);
+      } catch (itError) {
+        console.log(`[Downdetector] ❌ .it domain failed for ${service}:`, itError);
+        // If all domains fail, fall back to basic HTTP check
+        console.log(`[Downdetector] 🔄 All domains failed for ${service}, falling back to HTTP check`);
+        return await fallbackHttpCheck(req, res, `https://${service.toLowerCase()}.com`, startTime);
+      }
+    }
+
     const responseTime = Date.now() - startTime;
 
-    console.log(`[API] ✅ SUCCESS: ${service} - Status: ${response.status} - Source: Simulated Downdetector - Response Time: ${responseTime}ms`);
+    // Analyze the downdetector data to determine status
+    const status = analyzeDowndetectorData(response);
+    console.log(`[Downdetector] Analyzed status for ${service}: ${status}`);
+
+    console.log(`[Downdetector] ✅ SUCCESS: ${service} - Status: ${status} - Source: Downdetector API - Response Time: ${responseTime}ms`);
     apiUsageStats.downdetectorApi++;
     
     res.json({
-      status: response.status,
+      status,
       responseTime,
       serviceName: service,
-      dataSource: 'simulated-downdetector',
+      downdetectorData: response,
+      dataSource: 'downdetector-api',
       timestamp: new Date().toISOString(),
     });
 
   } catch (error) {
-    console.log(`[API] Error for ${service}:`, error);
-    // Fallback to basic HTTP check if simulation fails
-    return await fallbackHttpCheck(req, res, `https://${service.toLowerCase()}.com`);
+    // Fallback to basic HTTP check if downdetector API fails
+    console.log(`[Downdetector] Error for ${service}:`, error);
+    return await fallbackHttpCheck(req, res, `https://${service.toLowerCase()}.com`, startTime);
   }
 });
 
-// Simulate downdetector check (replace with actual API integration)
-async function simulateDowndetectorCheck(serviceName) {
-  // This is a simulation - in production, integrate with actual downdetector API
-  const commonServices = {
-    'google': 'https://google.com',
-    'facebook': 'https://facebook.com',
-    'twitter': 'https://twitter.com',
-    'instagram': 'https://instagram.com',
-    'github': 'https://github.com',
-    'netflix': 'https://netflix.com',
-    'youtube': 'https://youtube.com',
-    'amazon': 'https://amazon.com'
-  };
-
-  const url = commonServices[serviceName.toLowerCase()] || `https://${serviceName.toLowerCase()}.com`;
+// Analyze downdetector response to determine status
+function analyzeDowndetectorData(data) {
+  console.log(`[Downdetector] Analyzing data:`, JSON.stringify(data, null, 2));
   
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+  if (!data || !data.reports || !Array.isArray(data.reports)) {
+    console.log(`[Downdetector] No valid reports data, defaulting to 'up'`);
+    return 'up'; // Default to up if no data
+  }
 
-    const response = await fetch(url, {
-      method: 'HEAD',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'DownDetect/1.0 (Service Status Monitor)',
-      },
-      redirect: 'follow',
-    });
+  const reports = data.reports;
+  const baseline = data.baseline || [];
+  
+  // Get the most recent reports (last 5 data points)
+  const recentReports = reports.slice(-5);
+  const recentBaseline = baseline.slice(-5);
+  
+  console.log(`[Downdetector] Recent reports:`, recentReports);
+  console.log(`[Downdetector] Recent baseline:`, recentBaseline);
+  
+  if (recentReports.length === 0) {
+    console.log(`[Downdetector] No recent reports, defaulting to 'up'`);
+    return 'up';
+  }
 
-    clearTimeout(timeoutId);
-    const isUp = response.status >= 200 && response.status < 300;
+  // Calculate average reports vs baseline
+  const avgReports = recentReports.reduce((sum, report) => sum + report.value, 0) / recentReports.length;
+  const avgBaseline = recentBaseline.length > 0 
+    ? recentBaseline.reduce((sum, report) => sum + report.value, 0) / recentBaseline.length 
+    : 1;
 
-    // Simulate different statuses based on response
-    let status = 'up';
-    if (!isUp) {
-      status = 'down';
-    } else if (response.status >= 300 && response.status < 500) {
-      status = 'degraded';
-    }
+  console.log(`[Downdetector] Average reports: ${avgReports}, Average baseline: ${avgBaseline}`);
 
-    return { status };
-  } catch (error) {
-    return { status: 'down' };
+  // Determine status based on reports vs baseline
+  const ratio = avgReports / avgBaseline;
+  console.log(`[Downdetector] Ratio (reports/baseline): ${ratio}`);
+  
+  if (ratio > 10) {
+    console.log(`[Downdetector] Ratio > 10, status: 'down'`);
+    return 'down'; // Significantly more reports than baseline
+  } else if (ratio > 3) {
+    console.log(`[Downdetector] Ratio > 3, status: 'degraded'`);
+    return 'degraded'; // Elevated reports but not critical
+  } else {
+    console.log(`[Downdetector] Ratio <= 3, status: 'up'`);
+    return 'up'; // Normal levels
   }
 }
 
