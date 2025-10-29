@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ['nodejs-18_x', 'chromium', 'glib', 'nss', 'nspr', 'atk', 'at-spi2-atk', 'cups', 'drm', 'dbus', 'libxkbcommon', 'libxcomposite', 'libxdamage', 'libxfixes', 'libxrandr', 'libgbm', 'pango', 'cairo', 'libasound']
+nixPkgs = ['nodejs-18_x', 'glib', 'nss', 'nspr', 'atk', 'at-spi2-atk', 'cups', 'drm', 'dbus', 'libxkbcommon', 'libxcomposite', 'libxdamage', 'libxfixes', 'libxrandr', 'libgbm', 'pango', 'cairo', 'libasound']
 
 [phases.install]
 cmds = ['npm ci']
@@ -9,3 +9,7 @@ cmds = ['npm run build || echo "No build script"']
 
 [start]
 cmd = 'node server.js'
+
+[variables]
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'
+PUPPETEER_ARGS = '--no-sandbox,--disable-setuid-sandbox'

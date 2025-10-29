@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 
 // Set Puppeteer environment variables for Railway/Docker environments
+// Let Puppeteer download its own Chromium - more reliable than system Chromium
 if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
-  process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
-  process.env.PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
+  process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false';
+  process.env.PUPPETEER_ARGS = '--no-sandbox,--disable-setuid-sandbox';
 }
 
 let downdetectorModule;
