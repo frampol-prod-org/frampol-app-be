@@ -43,6 +43,7 @@ app.use('/api/support', require('./routes/support'));
 app.use('/api/bills', require('./routes/bills'));
 app.use('/api/usage', require('./routes/usage'));
 app.use('/api/downdetector', require('./routes/downdetector'));
+app.use('/api/quotes', require('./routes/quotes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
