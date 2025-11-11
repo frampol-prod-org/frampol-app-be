@@ -44,6 +44,7 @@ app.use('/api/bills', require('./routes/bills'));
 app.use('/api/usage', require('./routes/usage'));
 app.use('/api/downdetector', require('./routes/downdetector'));
 app.use('/api/quotes', require('./routes/quotes'));
+app.use('/api/speedtest', require('./routes/speedtest'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
